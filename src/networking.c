@@ -705,6 +705,8 @@ static void freeClientArgv(client *c) {
     c->cmd = NULL;
 }
 
+//断开所有的slave的连接，
+
 /* Close all the slaves connections. This is useful in chained replication
  * when we resync with our own master and want to force all our slaves to
  * resync with us as well. */

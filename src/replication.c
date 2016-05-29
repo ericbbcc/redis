@@ -1673,13 +1673,15 @@ int cancelReplicationHandshake(void) {
     return 1;
 }
 
+//设置指定的host和port为当前的master
+
 /* Set replication to the specified master address and port. */
 void replicationSetMaster(char *ip, int port) {
     sdsfree(server.masterhost);
     server.masterhost = sdsnew(ip);
     server.masterport = port;
     if (server.master) freeClient(server.master);
-    disconnectAllBlockedClients(); /* Clients blocked in master, now slave. */
+    disconnectAllBlockedClients(); /* Clients blocked in master, now slave. */ //断开阻塞的连接
     disconnectSlaves(); /* Force our slaves to resync with us as well. */
     replicationDiscardCachedMaster(); /* Don't try a PSYNC. */
     freeReplicationBacklog(); /* Don't allow our chained slaves to PSYNC. */
@@ -1689,6 +1691,8 @@ void replicationSetMaster(char *ip, int port) {
     server.repl_down_since = 0;
 }
 
+//把当前实例的master信息清除
+
 /* Cancel replication, setting the instance as a master itself. */
 void replicationUnsetMaster(void) {
     if (server.masterhost == NULL) return; /* Nothing to do. */
@@ -1696,13 +1700,18 @@ void replicationUnsetMaster(void) {
     server.masterhost = NULL;
     if (server.master) {
         if (listLength(server.slaves) == 0) {
+            //如果当前实例即将成为master，且没有slaves，则从master继承offset，在一定条件下
+            //这可以使得不同复制实例可以比较他们之间的复制进度。
+
             /* If this instance is turned into a master and there are no
              * slaves, it inherits the replication offset from the master.
              * Under certain conditions this makes replicas comparable by
              * replication offset to understand what is the most updated. */
             server.master_repl_offset = server.master->reploff;
+            //释放堆积缓冲区
             freeReplicationBacklog();
         }
+        //释放保存master的内存空间
         freeClient(server.master);
     }
     replicationDiscardCachedMaster();
@@ -1710,12 +1719,18 @@ void replicationUnsetMaster(void) {
     server.repl_state = REPL_STATE_NONE;
 }
 
+//这个方法在slave失去和master的连接之后被调用。
+
 /* This function is called when the slave lose the connection with the
  * master into an unexpected way. */
 void replicationHandleMasterDisconnection(void) {
     server.master = NULL;
     server.repl_state = REPL_STATE_CONNECT;
     server.repl_down_since = server.unixtime;
+
+    //我们失去了和master的连接，我们还没断开和slave的连接，因为之后我们可能会和master进行PSYNC。
+    //当需要全量同步的时候才会断开和slaves的连接。
+
     /* We lost connection with our master, don't disconnect slaves yet,
      * maybe we'll be able to PSYNC with our master later. We'll disconnect
      * the slaves only if we'll have to do a full resync with our master. */
@@ -1729,23 +1744,30 @@ void slaveofCommand(client *c) {
         return;
     }
 
+    //如: ./redis-server --slaveof 127.0.0.1 6379
+    //如果命令为:./redis-server --slaveof NO ONE，则把当前实例设置为master，否则说明master不是当前实例
+    //argv[1] == host
+    //argc[2] == port
+
     /* The special host/port combination "NO" "ONE" turns the instance
      * into a master. Otherwise the new master address is set. */
     if (!strcasecmp(c->argv[1]->ptr,"no") &&
         !strcasecmp(c->argv[2]->ptr,"one")) {
         if (server.masterhost) {
-            replicationUnsetMaster();
+            replicationUnsetMaster();//清除当前的master信息并缓存起来
             sds client = catClientInfoString(sdsempty(),c);
             serverLog(LL_NOTICE,"MASTER MODE enabled (user request from '%s')",
                 client);
             sdsfree(client);
         }
-    } else {
+    } else {//设置了host和port，当前实例不是master
         long port;
 
+        //将字符串port转换为longlong的类型
         if ((getLongFromObjectOrReply(c, c->argv[2], &port, NULL) != C_OK))
             return;
 
+        //如果想要附属的master之前已经附属过了，则直接返回
         /* Check if we are already attached to the specified slave */
         if (server.masterhost && !strcasecmp(server.masterhost,c->argv[1]->ptr)
             && server.masterport == port) {
@@ -1753,6 +1775,7 @@ void slaveofCommand(client *c) {
             addReplySds(c,sdsnew("+OK Already connected to specified master\r\n"));
             return;
         }
+        //如果之前没有附属过master或者第一次连接指定的master则继续
         /* There was no previous master or the user specified a different one,
          * we can continue. */
         replicationSetMaster(c->argv[1]->ptr, port);
@@ -1834,6 +1857,15 @@ void replicationSendAck(void) {
 
 /* ---------------------- MASTER CACHING FOR PSYNC -------------------------- */
 
+//为了实现增量同步、我们需要记住slave与master断开之前的master信息，这个信息缓存在server.cached_master中。
+//下面方法总是刷新cached_master的值。
+
+//这个方法被freeClient调用，为了缓存master的客户端信息，freeClient将会在这个方法返回之后尽可能快的返回
+
+//其他处理cached_master的方法有：
+//replicationResurrectCachedMaster方法会kill掉client，原因是client不再不需要了。
+//replicationResurrectCachedMaster用于PSYNC成功的握手之后重新激活cached master。
+
 /* In order to implement partial synchronization we need to be able to cache
  * our master's client structure after a transient disconnection.
  * It is cached into server.cached_master and flushed away using the following
@@ -1859,6 +1891,9 @@ void replicationCacheMaster(client *c) {
     /* Unlink the client from the server structures. */
     unlinkClient(c);
 
+    //保存master，之后server.master将会被通过replicationHandleMasterDisconnection设置为null。
+    //这应该是slave断开master之后。
+
     /* Save the master. Server.master will be set to null later by
      * replicationHandleMasterDisconnection(). */
     server.cached_master = server.master;
@@ -1869,11 +1904,15 @@ void replicationCacheMaster(client *c) {
         c->peerid = NULL;
     }
 
+    //freeClient实际上是将server.masrer备份并清空。
+
     /* Caching the master happens instead of the actual freeClient() call,
      * so make sure to adjust the replication state. This function will
      * also set server.master to NULL. */
     replicationHandleMasterDisconnection();
 }
+
+
 
 /* Free a cached master, called when there are no longer the conditions for
  * a partial resync on reconnection. */

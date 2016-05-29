@@ -164,6 +164,12 @@ void replyToBlockedClientTimedOut(client *c) {
     }
 }
 
+//由于当前slave变成了master，之前阻塞在当前master的客户端，再继续阻塞的话就不安全了，
+//例如：client阻塞在了list操作，当当前实例从master变为slave的时候，就不再安全了，因此，
+//该方法在每次实例从master变为slave的时候会被调用。
+
+//该方法语意为：回复－UNBLOCKED错误，同时断开连接。
+
 /* Mass-unblock clients because something changed in the instance that makes
  * blocking no longer safe. For example clients blocked in list operations
  * in an instance which turns from master to slave is unsafe, so this function
