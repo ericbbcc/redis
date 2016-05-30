@@ -483,6 +483,12 @@ need_full_resync:
     return C_ERR;
 }
 
+//开启子进程备份RDB文件，具体是socket方式还是disk方式取决于配置文件的配置，且确认脚本被刷新了
+//mincapa代表所有slave的容量
+
+//处理处于WAIT_START状态的slave，使得这些slave准备犬粮同步RDB
+//刷新Lua脚本
+
 /* Start a BGSAVE for replication goals, which is, selecting the disk or
  * socket target depending on the configuration, and making sure that
  * the script cache is flushed before to start.
@@ -910,6 +916,8 @@ void updateSlavesWaitingBgsave(int bgsaveerr, int type) {
 
 /* ----------------------------------- SLAVE -------------------------------- */
 
+//握手阶段的状态从REPL_STATE_RECEIVE_PONG到REPL_STATE_RECEIVE_PSYNC
+
 /* Returns 1 if the given replication state is a handshake state,
  * 0 otherwise. */
 int slaveIsInHandshakeState(void) {
@@ -942,6 +950,8 @@ void replicationEmptyDbCallback(void *privdata) {
     replicationSendNewlineToMaster();
 }
 
+//一旦我们和master建立了连接，同步进行过了，这个方法才讲master信息存储到server.master中
+
 /* Once we have a link with the master and the synchroniziation was
  * performed, this function materializes the master client we store
  * at server.master, starting from the specified file descriptor. */
@@ -953,6 +963,8 @@ void replicationCreateMasterClient(int fd) {
     server.master->reploff = server.repl_master_initial_offset;
     memcpy(server.master->replrunid, server.repl_master_runid,
         sizeof(server.repl_master_runid));
+    //如果master的复制offser为-1，则说明这个mater是老版本的master，不支持PSYNC
+
     /* If master offset is set to -1, this master is old and is not
      * PSYNC capable, so we flag it accordingly. */
     if (server.master->reploff == -1)
@@ -1602,6 +1614,10 @@ write_error: /* Handle sendSynchronousCommand(SYNC_CMD_WRITE) errors. */
     goto error;
 }
 
+//建立和master的连接
+//注册与master连接的读写I/O事件，事件处理器为syncWithMaster
+//状态为REPL_STATE_CONNECTING
+
 int connectWithMaster(void) {
     int fd;
 
@@ -1627,6 +1643,8 @@ int connectWithMaster(void) {
     return C_OK;
 }
 
+//取消监听网络I／O的读写事件
+
 /* This function can be called when a non blocking connection is currently
  * in progress to undo it.
  * Never call this function directly, use cancelReplicationHandshake() instead.
@@ -1639,6 +1657,8 @@ void undoConnectWithMaster(void) {
     server.repl_transfer_s = -1;
 }
 
+//取消异步下载RDB文件
+
 /* Abort the async download of the bulk dataset while SYNC-ing with master.
  * Never call this function directly, use cancelReplicationHandshake() instead.
  */
@@ -1650,6 +1670,12 @@ void replicationAbortSyncTransfer(void) {
     zfree(server.repl_transfer_tmpfile);
 }
 
+//当前函数用于取消非阻塞的复制
+//1，如果复制状态是REPL_STATE_TRANSFER，则说明正在传输RDB文件，取消传输
+//2，如果复制状态是REPL_STATE_CONNECTING或者正在连接，则断开和master的连接
+
+//将复制状态设置为REPL_STATE_CONNECT
+
 /* This function aborts a non blocking replication attempt if there is one
  * in progress, by canceling the non-blocking connect attempt or
  * the initial bulk transfer.
@@ -1660,7 +1686,7 @@ void replicationAbortSyncTransfer(void) {
  * Otherwise zero is returned and no operation is perforemd at all. */
 int cancelReplicationHandshake(void) {
     if (server.repl_state == REPL_STATE_TRANSFER) {
-        replicationAbortSyncTransfer();
+        replicationAbortSyncTransfer();//取消传输RDB文件
         server.repl_state = REPL_STATE_CONNECT;
     } else if (server.repl_state == REPL_STATE_CONNECTING ||
                slaveIsInHandshakeState())
@@ -1684,7 +1710,7 @@ void replicationSetMaster(char *ip, int port) {
     disconnectAllBlockedClients(); /* Clients blocked in master, now slave. */ //断开阻塞的连接
     disconnectSlaves(); /* Force our slaves to resync with us as well. */
     replicationDiscardCachedMaster(); /* Don't try a PSYNC. */
-    freeReplicationBacklog(); /* Don't allow our chained slaves to PSYNC. */
+    freeReplicationBacklog(); /* Don't allow our chained slaves to PSYNC. */ //释放backlog
     cancelReplicationHandshake();
     server.repl_state = REPL_STATE_CONNECT;
     server.master_repl_offset = 0;
@@ -1839,6 +1865,8 @@ void roleCommand(client *c) {
     }
 }
 
+//向master发送REPLCONF AVCK命令，让master知道当前slave的复制进度
+
 /* Send a REPLCONF ACK command to the master to inform it about the current
  * processed offset. If we are not connected with a master, the command has
  * no effects. */
@@ -1912,7 +1940,7 @@ void replicationCacheMaster(client *c) {
     replicationHandleMasterDisconnection();
 }
 
-
+//清空cached_master
 
 /* Free a cached master, called when there are no longer the conditions for
  * a partial resync on reconnection. */
@@ -2218,9 +2246,19 @@ long long replicationGetSlaveOffset(void) {
 
 /* --------------------------- REPLICATION CRON  ---------------------------- */
 
+//复制定时任务
+
 /* Replication cron function, called 1 time per second. */
 void replicationCron(void) {
     static long long replication_cron_loops = 0;
+
+    //针对slave
+    //1，指定了master
+    //2，复制状态是（正在连接或者正在握手）
+    //3，距离上次复制的时间大于复制超时时间
+
+    //满足上面三个条件，则取消握手
+
 
     /* Non blocking connection timeout? */
     if (server.masterhost &&
@@ -2232,6 +2270,11 @@ void replicationCron(void) {
         cancelReplicationHandshake();
     }
 
+    //针对slave
+    //如果指定了master，且正在传输RDB文件，且距离上一次传输的时间大于复制超时时间
+
+    //则取消握手
+
     /* Bulk transfer I/O timeout? */
     if (server.masterhost && server.repl_state == REPL_STATE_TRANSFER &&
         (time(NULL)-server.repl_transfer_lastio) > server.repl_timeout)
@@ -2240,6 +2283,11 @@ void replicationCron(void) {
         cancelReplicationHandshake();
     }
 
+    //针对slave
+    //指定了master，复制状态为已经连接了且距离上一次的交互时间大于复制超时时间
+
+    //释放master
+
     /* Timed out master when we are an already connected slave? */
     if (server.masterhost && server.repl_state == REPL_STATE_CONNECTED &&
         (time(NULL)-server.master->lastinteraction) > server.repl_timeout)
@@ -2247,6 +2295,10 @@ void replicationCron(void) {
         serverLog(LL_WARNING,"MASTER timeout: no data nor PING received...");
         freeClient(server.master);
     }
+
+    //针对slave
+    //检查是否需要和master建立连接
+    //包括状态迁移
 
     /* Check if we should connect to a MASTER */
     if (server.repl_state == REPL_STATE_CONNECT) {
@@ -2257,12 +2309,21 @@ void replicationCron(void) {
         }
     }
 
+    //针对slave
+    //向master发送ACK
+    //我们不向不支持PSYNC以及replication offset的master发送ACK
+
     /* Send ACK to master from time to time.
      * Note that we do not send periodic acks to masters that don't
      * support PSYNC and replication offsets. */
     if (server.masterhost && server.master &&
         !(server.master->flags & CLIENT_PRE_PSYNC))
         replicationSendAck();
+
+    //针对master
+    //如果当前有slaves，则ping他们
+    //因此slaves可以实现显式的master超时管理
+    //而且可以检测网络连接是不是挂了
 
     /* If we have attached slaves, PING them from time to time.
      * So slaves can implement an explicit timeout to masters, and will
@@ -2272,6 +2333,9 @@ void replicationCron(void) {
     listNode *ln;
     robj *ping_argv[1];
 
+    //针对master
+    //首先、pingslaves的时间间隔为一定的频率
+
     /* First, send PING according to ping_slave_period. */
     if ((replication_cron_loops % server.repl_ping_slave_period) == 0) {
         ping_argv[0] = createStringObject("PING",4);
@@ -2279,6 +2343,11 @@ void replicationCron(void) {
             ping_argv, 1);
         decrRefCount(ping_argv[0]);
     }
+
+    //针对master
+    //其次、在同步之前发送一个换行符给slaves，意思是slaves需要等待master创建RDB文件
+    //slaves接收到这个换行符将会刷新last－io时间，从而阻止timeout。在这个例子中我们
+    //忽略ping的周期、每秒刷新一次连接，因为timeout是多个秒级别
 
     /* Second, send a newline to all the slaves in pre-synchronization
      * stage, that is, slaves waiting for the master to create the RDB file.
@@ -2290,6 +2359,9 @@ void replicationCron(void) {
     while((ln = listNext(&li))) {
         client *slave = ln->value;
 
+        //如果slave正处于等待master开始备份RDB文件的状态
+        //或者slave正处于等待master结束备份RDB文件的状态且复制类型不为diskless类型
+
         if (slave->replstate == SLAVE_STATE_WAIT_BGSAVE_START ||
             (slave->replstate == SLAVE_STATE_WAIT_BGSAVE_END &&
              server.rdb_child_type != RDB_CHILD_TYPE_SOCKET))
@@ -2299,6 +2371,9 @@ void replicationCron(void) {
             }
         }
     }
+
+    //针对master
+    //释放连接超时的slave
 
     /* Disconnect timedout slaves. */
     if (listLength(server.slaves)) {
@@ -2320,6 +2395,8 @@ void replicationCron(void) {
         }
     }
 
+    //如果当前实例没有slaves，并且有backlog占用内存，且超过了这块内存的存活时间，则释放
+
     /* If we have no attached slaves and there is a replication backlog
      * using memory, free it after some (configured) time. */
     if (listLength(server.slaves) == 0 && server.repl_backlog_time_limit &&
@@ -2336,6 +2413,8 @@ void replicationCron(void) {
         }
     }
 
+    //如果AO被关闭，且没有slaves了，我们可以清空复制脚本
+
     /* If AOF is disabled and we no longer have attached slaves, we can
      * free our Replication Script Cache as there is no need to propagate
      * EVALSHA at all. */
@@ -2345,6 +2424,9 @@ void replicationCron(void) {
     {
         replicationScriptCacheFlush();
     }
+
+    //如果是Diskless复制模式，且有slave正在处于等待发送RDB文件的状态，如果到了备份RDB文件的时候
+    //这段代码也适用于当diskless被关闭的时候，触发备份RDB文件
 
     /* If we are using diskless replication and there are slaves waiting
      * in WAIT_BGSAVE_START state, check if enough seconds elapsed and
@@ -2372,7 +2454,9 @@ void replicationCron(void) {
             }
         }
 
+        //如果有slave正在WAIT_BGSAVE_START状态，且可以备份RDB文件了
         if (slaves_waiting && max_idle > server.repl_diskless_sync_delay) {
+            //开启备份RDB文件的子进程，通常用于diskless状态，活着配置文件被变更而处于disk target状态
             /* Start a BGSAVE. Usually with socket target, or with disk target
              * if there was a recent socket -> disk config change. */
             startBgsaveForReplication(mincapa);

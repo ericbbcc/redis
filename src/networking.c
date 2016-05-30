@@ -705,7 +705,8 @@ static void freeClientArgv(client *c) {
     c->cmd = NULL;
 }
 
-//断开所有的slave的连接，
+//断开所有的slave的连接，这在链式复制中是非常有效的，当我们重新和master同步的时候，
+//我们也希望自己的slaves也重新同步
 
 /* Close all the slaves connections. This is useful in chained replication
  * when we resync with our own master and want to force all our slaves to
@@ -763,6 +764,8 @@ void unlinkClient(client *c) {
 void freeClient(client *c) {
     listNode *ln;
 
+    //如果c是master，则我们需要缓存master信息，以供重新连接的时候使用
+
     /* If it is our master that's beging disconnected we should make sure
      * to cache the state to try a partial resynchronization later.
      *
@@ -785,6 +788,8 @@ void freeClient(client *c) {
         serverLog(LL_WARNING,"Connection with slave %s lost.",
             replicationGetSlaveName(c));
     }
+
+    //释放查询缓存
 
     /* Free the query buffer */
     sdsfree(c->querybuf);
@@ -813,9 +818,12 @@ void freeClient(client *c) {
      * places where active clients may be referenced. */
     unlinkClient(c);
 
+    //如果释放的是slave
+
     /* Master/slave cleanup Case 1:
      * we lost the connection with a slave. */
     if (c->flags & CLIENT_SLAVE) {
+        //如果slave正在接受RDB文件
         if (c->replstate == SLAVE_STATE_SEND_BULK) {
             if (c->repldbfd != -1) close(c->repldbfd);
             if (c->replpreamble) sdsfree(c->replpreamble);
@@ -824,6 +832,9 @@ void freeClient(client *c) {
         ln = listSearchKey(l,c);
         serverAssert(ln != NULL);
         listDelNode(l,ln);
+        
+        //如果释放的是slave且没有slaves了，记住当前时间
+
         /* We need to remember the time when we started to have zero
          * attached slaves, as after some time we'll free the replication
          * backlog. */
@@ -831,7 +842,7 @@ void freeClient(client *c) {
             server.repl_no_slaves_since = server.unixtime;
         refreshGoodSlavesCount();
     }
-
+    
     /* Master/slave cleanup Case 2:
      * we lost the connection with the master. */
     if (c->flags & CLIENT_MASTER) replicationHandleMasterDisconnection();
