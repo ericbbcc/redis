@@ -1334,6 +1334,8 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
     if (server.active_expire_enabled && server.masterhost == NULL)
         activeExpireCycle(ACTIVE_EXPIRE_CYCLE_FAST);
 
+    //如果在之前的eventloop中至少有一个slave阻塞了，向所有的slave发送ACK
+
     /* Send all the slaves an ACK request if at least one client blocked
      * during the previous event loop iteration. */
     if (server.get_ack_from_slaves) {
@@ -2124,6 +2126,10 @@ struct redisCommand *lookupCommandOrOriginal(sds name) {
     if (!cmd) cmd = dictFetchValue(server.orig_commands,name);
     return cmd;
 }
+
+//传播命令
+//1，命令写入AOF文件
+//2，命令传播给slaves
 
 /* Propagate the specified command (in the context of the specified database id)
  * to AOF and Slaves.

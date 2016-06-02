@@ -133,6 +133,14 @@ client *createClient(int fd) {
     return c;
 }
 
+//这个方法在每次要发送数据给客户端的时候被调用，行为如下：
+//如果客户端接受，则返回C_OK，注册客户端写事件，从而当可以写的时候进行写操作。
+//如果客户端不正确， 返回C_ERR。
+
+//下面两种情况会返回C_OK且不注册写事件：
+//1，事件处理器已经被注册
+//2，客户端是slave但是不在线，这个时候会将数据缓存起来。
+
 /* This function is called every time we are going to transmit new data
  * to the client. The behavior is the following:
  *
@@ -581,6 +589,8 @@ void copyClientOutputBuffer(client *dst, client *src) {
     dst->reply_bytes = src->reply_bytes;
 }
 
+//如果实例有缓存的内容还没有发送给客户端，则返回true
+
 /* Return true if the specified client has pending reply buffers to write to
  * the socket. */
 int clientHasPendingReplies(client *c) {
@@ -842,7 +852,7 @@ void freeClient(client *c) {
             server.repl_no_slaves_since = server.unixtime;
         refreshGoodSlavesCount();
     }
-    
+
     /* Master/slave cleanup Case 2:
      * we lost the connection with the master. */
     if (c->flags & CLIENT_MASTER) replicationHandleMasterDisconnection();
