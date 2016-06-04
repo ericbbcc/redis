@@ -816,6 +816,8 @@ werr:
     return C_ERR;
 }
 
+//这个方法仅仅是rdbSaveRio的包装，在rdb的前后加入分隔符
+
 /* This is just a wrapper to rdbSaveRio() that additionally adds a prefix
  * and a suffix to the generated RDB dump. The prefix is:
  *
@@ -1411,19 +1413,22 @@ eoferr: /* unexpected end of file is handled here with a fatal exit */
     return C_ERR; /* Just to avoid warning */
 }
 
+//当子进程备份或者同步完master结束之后，这个方法会被调用。
+
 /* A background saving child (BGSAVE) terminated its work. Handle this.
  * This function covers the case of actual BGSAVEs. */
 void backgroundSaveDoneHandlerDisk(int exitcode, int bysignal) {
+    //子进程成功推出
     if (!bysignal && exitcode == 0) {
         serverLog(LL_NOTICE,
             "Background saving terminated with success");
         server.dirty = server.dirty - server.dirty_before_bgsave;
         server.lastsave = time(NULL);
         server.lastbgsave_status = C_OK;
-    } else if (!bysignal && exitcode != 0) {
+    } else if (!bysignal && exitcode != 0) {//子进程出错
         serverLog(LL_WARNING, "Background saving error");
         server.lastbgsave_status = C_ERR;
-    } else {
+    } else {//子进程被有意图的终止，这里需要清空暂存文件
         mstime_t latency;
 
         serverLog(LL_WARNING,
@@ -1432,6 +1437,7 @@ void backgroundSaveDoneHandlerDisk(int exitcode, int bysignal) {
         rdbRemoveTempFile(server.rdb_child_pid);
         latencyEndMonitor(latency);
         latencyAddSampleIfNeeded("rdb-unlink-temp-file",latency);
+        //SIGUSR1是在白名单里面，因此我们可以不报错的终止子进程
         /* SIGUSR1 is whitelisted, so we have a way to kill a child without
          * tirggering an error conditon. */
         if (bysignal != SIGUSR1)
@@ -1441,10 +1447,13 @@ void backgroundSaveDoneHandlerDisk(int exitcode, int bysignal) {
     server.rdb_child_type = RDB_CHILD_TYPE_NONE;
     server.rdb_save_time_last = time(NULL)-server.rdb_save_time_start;
     server.rdb_save_time_start = -1;
+    //处理当复制正在进行的时候有可能有进来slave的情况。
     /* Possibly there are slaves waiting for a BGSAVE in order to be served
      * (the first stage of SYNC is a bulk transfer of dump.rdb) */
     updateSlavesWaitingBgsave((!bysignal && exitcode == 0) ? C_OK : C_ERR, RDB_CHILD_TYPE_DISK);
 }
+
+//当子进程结束，这里进行后处理，针对diskless方式的复制
 
 /* A background saving child (BGSAVE) terminated its work. Handle this.
  * This function covers the case of RDB -> Salves socket transfers for
@@ -1465,9 +1474,13 @@ void backgroundSaveDoneHandlerSocket(int exitcode, int bysignal) {
     server.rdb_child_type = RDB_CHILD_TYPE_NONE;
     server.rdb_save_time_start = -1;
 
+    //如果子进程正常返回，我们读取slave的集合，检查slave的状态码，我们会结束状态错误的slave。
+
     /* If the child returns an OK exit code, read the set of slave client
      * IDs and the associated status code. We'll terminate all the slaves
      * in error state.
+    
+    //如果子进程返回错误信息，考虑到slave列表可以为空，因
      *
      * If the process returned an error, consider the list of slaves that
      * can continue to be emtpy, so that it's just a special case of the

@@ -903,7 +903,16 @@ void sendBulkToSlave(aeEventLoop *el, int fd, void *privdata, int mask) {
     }
 }
 
-//这个方法在备份RDB文件之后被调用
+//这个方法在下面几种情况下会被调用
+//1, 每次子进程结束
+//2，复制策略被修改
+
+//这个方法的目的是处理那些等待子进程结束的slaves，为了实现非阻塞的同步，如果在上次复制的过程中
+//有slave进来会进行定时任务调度，从而开始下一轮的复制。
+
+//bgsaveerr表示子进程的结束情况
+//type表示子进程的复制类型，是RDB disk类型还是diskless类型
+
 
 /* This function is called at the end of every background saving,
  * or when the replication RDB transfer strategy is modified from
@@ -929,10 +938,12 @@ void updateSlavesWaitingBgsave(int bgsaveerr, int type) {
     while((ln = listNext(&li))) {
         client *slave = ln->value;
 
+        //如果有slave等待下一次的复制开始
         if (slave->replstate == SLAVE_STATE_WAIT_BGSAVE_START) {
             startbgsave = 1;
             mincapa = (mincapa == -1) ? slave->slave_capa :
                                         (mincapa & slave->slave_capa);
+        //如果slave复制已经完成
         } else if (slave->replstate == SLAVE_STATE_WAIT_BGSAVE_END) {
             struct redis_stat buf;
 
@@ -979,6 +990,7 @@ void updateSlavesWaitingBgsave(int bgsaveerr, int type) {
             }
         }
     }
+    //对于有slave等待下一次复制开始的情况，启动子进程
     if (startbgsave) startBgsaveForReplication(mincapa);
 }
 
