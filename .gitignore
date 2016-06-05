@@ -1,4 +1,5 @@
 .*.swp
+.idea
 *.o
 *.log
 dump.rdb
