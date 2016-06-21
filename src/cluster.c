@@ -1995,6 +1995,8 @@ int clusterProcessPacket(clusterLink *link) {
             senderCurrentEpoch >= server.cluster->failover_auth_epoch)
         {
             server.cluster->failover_auth_count++;
+            // 收到ACK,则设置failover标志位,下次beforeSleep的时候可以进行failover
+
             /* Maybe we reached a quorum here, set a flag to make sure
              * we check ASAP. */
             clusterDoBeforeSleep(CLUSTER_TODO_HANDLE_FAILOVER);
@@ -2509,6 +2511,8 @@ void clusterRequestFailoverAuth(void) {
     uint32_t totlen;
 
     clusterBuildMessageHdr(hdr,CLUSTERMSG_TYPE_FAILOVER_AUTH_REQUEST);
+    // 如果是人工failover,则设置CLUSTERMSG_FLAG0_FORCEACK位,告诉其他slave不管master是不是可用都要failover
+
     /* If this is a manual failover, set the CLUSTERMSG_FLAG0_FORCEACK bit
      * in the header to communicate the nodes receiving the message that
      * they should authorized the failover even if the master is working. */
@@ -2797,7 +2801,8 @@ void clusterHandleSlaveFailover(void) {
                           server.cluster->mf_can_start;
     mstime_t auth_timeout, auth_retry_time;
 
-    //设置或情况failover标志
+    // 收到ACK的时候是设置,这里是情况failover标记位
+    
     server.cluster->todo_before_sleep &= ~CLUSTER_TODO_HANDLE_FAILOVER;
 
     // 计算
