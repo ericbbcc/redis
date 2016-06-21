@@ -1,0 +1,38 @@
+IO事件						事件处理器	
+
+AE_READABLE					redisAeReadEvent
+AE_WRITABLE					redisAeWriteEvent
+
+＃AOF
+AE_WRITABLE					aofChildWriteDiffData
+AE_READABLE					aofChildPipeReadable
+
+＃cluster
+AE_READABLE					clusterAcceptHandler
+AE_READABLE					clusterReadHandler
+AE_WRITABLE					clusterWriteHandler
+
+＃command
+AE_READABLE					readQueryFromClient
+AE_WRITABLE					sendReplyToClient				客户端写处理器
+
+AE_WRITABLE					writeHandler
+AE_READABLE					readHandler
+
+＃RDB
+AE_WRITABLE					sendBulkToSlave					master发送RDB文件给slave
+AE_READABLE					readSyncBulkPayload				slave读取master的RDB文件
+
+AE_READABLE|AE_WRITABLE		syncWithMaster					slave处理和master的读写I／O事件
+
+＃accept
+AE_READABLE					acceptTcpHandler				接受网络连接
+AE_READABLE					acceptUnixHandler				接受本机socket连接
+
+
+Timer事件					事件处理器
+1ms							showThroughput
+1ms							serverCron
+
+
+
