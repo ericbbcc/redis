@@ -8,8 +8,8 @@ AE_WRITABLE					aofChildWriteDiffData
 AE_READABLE					aofChildPipeReadable
 
 ＃cluster
-AE_READABLE					clusterAcceptHandler
-AE_READABLE					clusterReadHandler
+AE_READABLE					clusterAcceptHandler            接收集群群连接
+AE_READABLE					clusterReadHandler              集群连接之后读
 AE_WRITABLE					clusterWriteHandler
 
 ＃command

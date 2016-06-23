@@ -36,6 +36,7 @@
 
 struct clusterNode;
 
+// 集群连接
 /* clusterLink encapsulates everything needed to talk with a remote node. */
 typedef struct clusterLink {
     mstime_t ctime;             /* Link creation time */
@@ -73,12 +74,16 @@ typedef struct clusterLink {
 #define CLUSTER_CANT_FAILOVER_WAITING_VOTES 4
 #define CLUSTER_CANT_FAILOVER_RELOG_PERIOD (60*5) /* seconds. */
 
+// 阶段failure的报告
 /* This structure represent elements of node->fail_reports. */
 typedef struct clusterNodeFailReport {
+    // 哪个节点发送的
     struct clusterNode *node;  /* Node reporting the failure condition. */
+    // 报告的时间
     mstime_t time;             /* Time of the last report from this node. */
 } clusterNodeFailReport;
 
+// 集群节点
 typedef struct clusterNode {
     mstime_t ctime; /* Node object creation time. */
     char name[CLUSTER_NAMELEN]; /* Node name, hex string, sha1-size */
@@ -106,6 +111,7 @@ typedef struct clusterNode {
     list *fail_reports;         /* List of nodes signaling this as failing */
 } clusterNode;
 
+// 集群状态
 typedef struct clusterState {
     clusterNode *myself;  /* This node */
     uint64_t currentEpoch;
@@ -178,10 +184,12 @@ typedef struct {
     uint32_t notused1;
 } clusterMsgDataGossip;
 
+// 指定某个几点fail的消息
 typedef struct {
     char nodename[CLUSTER_NAMELEN];
 } clusterMsgDataFail;
 
+// 发布/订阅传播消息
 typedef struct {
     uint32_t channel_len;
     uint32_t message_len;
@@ -192,7 +200,9 @@ typedef struct {
 } clusterMsgDataPublish;
 
 typedef struct {
+    // 指定实例的configEpoch
     uint64_t configEpoch; /* Config epoch of the specified instance. */
+    // 节点名
     char nodename[CLUSTER_NAMELEN]; /* Name of the slots owner. */
     unsigned char slots[CLUSTER_SLOTS/8]; /* Slots bitmap. */
 } clusterMsgDataUpdate;
@@ -230,13 +240,17 @@ typedef struct {
     uint16_t type;      /* Message type */
     uint16_t count;     /* Only used for some kind of messages. */
     uint64_t currentEpoch;  /* The epoch accordingly to the sending node. */
+    //configEpoch只是关于slots分布的一个版本号
     uint64_t configEpoch;   /* The config epoch if it's a master, or the last
                                epoch advertised by its master if it is a
                                slave. */
     uint64_t offset;    /* Master replication offset if node is a master or
                            processed replication offset if node is a slave. */
+    //发送消息的节点名
     char sender[CLUSTER_NAMELEN]; /* Name of the sender node */
+    //??长度为啥
     unsigned char myslots[CLUSTER_SLOTS/8];
+    //slaveof哪个master
     char slaveof[CLUSTER_NAMELEN];
     char myip[NET_IP_STR_LEN];    /* Sender IP, if not all zeroed. */
     char notused1[34];  /* 34 bytes reserved for future usage. */
