@@ -135,9 +135,11 @@ typedef struct clusterState {
     mstime_t mf_end;            /* Manual failover time limit (ms unixtime).
                                    It is zero if there is no MF in progress. */
     /* Manual failover state of master. */
+    // 进行failover的salve节点
     clusterNode *mf_slave;      /* Slave performing the manual failover. */
+    // failover的slave节点的状态
     /* Manual failover state of slave. */
-    long long mf_master_offset; /* Master offset the slave needs to start MF
+    long long   mf_master_offset; /* Master offset the slave needs to start MF
                                    or zero if stil not received. */
     int mf_can_start;           /* If non-zero signal that the manual failover
                                    can start requesting masters vote. */
@@ -248,7 +250,7 @@ typedef struct {
                            processed replication offset if node is a slave. */
     //发送消息的节点名
     char sender[CLUSTER_NAMELEN]; /* Name of the sender node */
-    //??长度为啥
+    //??长度为啥,是因为myslots数组每个单元用bit标识是否有slot
     unsigned char myslots[CLUSTER_SLOTS/8];
     //slaveof哪个master
     char slaveof[CLUSTER_NAMELEN];
