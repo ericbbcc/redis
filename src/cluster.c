@@ -3450,15 +3450,24 @@ void clusterCron(void) {
     dictIterator *di;
     dictEntry *de;
     int update_state = 0;
+    // 记录当前有多少master没有slave
     int orphaned_masters; /* How many masters there are without ok slaves. */
+    // 对于一个master来说最大的slave数
     int max_slaves; /* Max number of ok slaves for a single master. */
+    // 如果我是slave的话,那么这里代表我的master有多少slaves
     int this_slaves; /* Number of ok slaves for our master (if we are slave). */
+    // 距离上一次pong的最久的一个时间
     mstime_t min_pong = 0, now = mstime();
+    // 收到pong最久的那个node
     clusterNode *min_pong_node = NULL;
     static unsigned long long iteration = 0;
     mstime_t handshake_timeout;
 
+    // 目前为止当前方法被调用的次数
     iteration++; /* Number of times this function was called so far. */
+
+    // 我们想要同步myself-ip和cluster-announce-ip选项,这个选项可以在运行时通过CONOFIG SET设置。
+    // 因此我们周期性的检查这个配置参数,来更新我们的myself-ip。
 
     /* We want to take myself->ip in sync with the cluster-announce-ip option.
      * The option can be set at runtime via CONFIG SET, so we periodically check
@@ -3468,22 +3477,28 @@ void clusterCron(void) {
         char *curr_ip = server.cluster_announce_ip;
         int changed = 0;
 
+        // 判断ip配置是否变更过
         if (prev_ip == NULL && curr_ip != NULL) changed = 1;
         if (prev_ip != NULL && curr_ip == NULL) changed = 1;
         if (prev_ip && curr_ip && strcmp(prev_ip,curr_ip)) changed = 1;
 
+        // 如果ip配置变更过
         if (changed) {
             prev_ip = curr_ip;
             if (prev_ip) prev_ip = zstrdup(prev_ip);
 
             if (curr_ip) {
+                // 设置配置的ip为当前的ip
                 strncpy(myself->ip,server.cluster_announce_ip,NET_IP_STR_LEN);
                 myself->ip[NET_IP_STR_LEN-1] = '\0';
             } else {
+                // 情况当前ip
                 myself->ip[0] = '\0'; /* Force autodetection. */
             }
         }
     }
+
+    // 握手超时时间为,要么为cluster_node_timeout,最小为1s
 
     /* The handshake timeout is the time after which a handshake node that was
      * not turned into a normal node is removed from the nodes. Usually it is
@@ -3492,12 +3507,19 @@ void clusterCron(void) {
     handshake_timeout = server.cluster_node_timeout;
     if (handshake_timeout < 1000) handshake_timeout = 1000;
 
+    // 检查我们是否有断开连接的node,重新确认连接
+
     /* Check if we have disconnected nodes and re-establish the connection. */
     di = dictGetSafeIterator(server.cluster->nodes);
+    // 遍历cluster->nodes
     while((de = dictNext(di)) != NULL) {
         clusterNode *node = dictGetVal(de);
 
+        // 如果节点为我自己,或者是没有地址,我们不知道这个node的地址,为什么不知道呢?
         if (node->flags & (CLUSTER_NODE_MYSELF|CLUSTER_NODE_NOADDR)) continue;
+
+        // 处于 HANDSHAKE 状态的节点拥有有限的寿命,和配置的cluster-timeout一致。
+        // 当前时间 - 节点创建的时间 > handshake_timeout
 
         /* A Node in HANDSHAKE state has a limited lifespan equal to the
          * configured node timeout. */
@@ -3505,14 +3527,16 @@ void clusterCron(void) {
             clusterDelNode(node);
             continue;
         }
-
+        // 节点没有链路
         if (node->link == NULL) {
             int fd;
             mstime_t old_ping_sent;
             clusterLink *link;
-
+            // 和指定的节点创建连接
             fd = anetTcpNonBlockBindConnect(server.neterr, node->ip,
                 node->cport, NET_FIRST_BIND_ADDR);
+            // 如果创建连接返回-1,则出错,如果node->ping_sent为0,则无法检测错误
+            // 仅此这里设置个ping_sent时间,用于检测错误
             if (fd == -1) {
                 /* We got a synchronous error from connect before
                  * clusterSendPing() had a chance to be called.
@@ -3525,11 +3549,19 @@ void clusterCron(void) {
                     node->cport, server.neterr);
                 continue;
             }
+            // 创建链路
             link = createClusterLink(node);
             link->fd = fd;
             node->link = link;
+            // 注册IO事件处理器
             aeCreateFileEvent(server.el,link->fd,AE_READABLE,
                     clusterReadHandler,link);
+            // 发送一个MEET或者PING
+            // MEET标识是什么时候设置的呢?
+            // 1) 当收到gossip消息需要同某个node建立连接的时候
+            // 2) 当执行clusterCommand命令的时候
+            // 也就是集群建立的时候对于所有node的状态为MEET,然后这里会进行握手
+
             /* Queue a PING in the new connection ASAP: this is crucial
              * to avoid false positives in failure detection.
              *
@@ -3540,11 +3572,15 @@ void clusterCron(void) {
             clusterSendPing(link, node->flags & CLUSTER_NODE_MEET ?
                     CLUSTERMSG_TYPE_MEET : CLUSTERMSG_TYPE_PING);
             if (old_ping_sent) {
+                // 在链路断开之前如果有或者的ping,我们重置ping的时间
                 /* If there was an active ping before the link was
                  * disconnected, we want to restore the ping time, otherwise
                  * replaced by the clusterSendPing() call. */
                 node->ping_sent = old_ping_sent;
             }
+            // 我们可以在第一个消息发出去之后清除标记,如果我们永远没有收到PONG,我们永远不会发送新的消息给这个节点
+            // 而当接收到PONG消息之后,我们不在处于meet或者握手状态,我们发送正常的PING数据包
+
             /* We can clear the flag after the first packet is sent.
              * If we'll never receive a PONG, we'll never send new packets
              * to this node. Instead after the PONG is received and we
@@ -3558,10 +3594,14 @@ void clusterCron(void) {
     }
     dictReleaseIterator(di);
 
+    // 没十个迭代ping一些随机的节点一次,每0.1秒一个迭代,也就是一秒钟ping一次
+
     /* Ping some random node 1 time every 10 iterations, so that we usually ping
      * one random node every second. */
     if (!(iteration % 10)) {
         int j;
+
+        // 检查一些随机的节点,挑选有最老的pong_received time的节点
 
         /* Check a few random nodes and ping the one with the oldest
          * pong_received time. */
@@ -3569,20 +3609,27 @@ void clusterCron(void) {
             de = dictGetRandomKey(server.cluster->nodes);
             clusterNode *this = dictGetVal(de);
 
+            // 不要ping已经断开的node,也不要ping已经正在ping的node
+
             /* Don't ping nodes disconnected or with a ping currently active. */
             if (this->link == NULL || this->ping_sent != 0) continue;
+            // 不ping自己,也不要ping正在握手的node
             if (this->flags & (CLUSTER_NODE_MYSELF|CLUSTER_NODE_HANDSHAKE))
                 continue;
+            // 如果min_pong_node == NULL,min_pong_node是什么呢?
             if (min_pong_node == NULL || min_pong > this->pong_received) {
                 min_pong_node = this;
                 min_pong = this->pong_received;
             }
         }
+        // 收到pong最久的那个node发送PING
         if (min_pong_node) {
             serverLog(LL_DEBUG,"Pinging node %.40s", min_pong_node->name);
             clusterSendPing(min_pong_node->link, CLUSTERMSG_TYPE_PING);
         }
     }
+
+    
 
     /* Iterate nodes to check if we need to flag something as failing.
      * This loop is also responsible to:
