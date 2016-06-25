@@ -3629,7 +3629,10 @@ void clusterCron(void) {
         }
     }
 
-    
+    // 迭代节点,检查是否要标记某些node为failing,这个循环同时做下面的事情:
+    // 1) 检查是否有孤立的master
+    // 2) 计算为failing的master的最大slaves数
+    // 3) 计算我们master的slaves数
 
     /* Iterate nodes to check if we need to flag something as failing.
      * This loop is also responsible to:
@@ -3643,18 +3646,22 @@ void clusterCron(void) {
     di = dictGetSafeIterator(server.cluster->nodes);
     while((de = dictNext(di)) != NULL) {
         clusterNode *node = dictGetVal(de);
+        // 每个迭代的时间
         now = mstime(); /* Use an updated time at every iteration. */
         mstime_t delay;
 
+        // 如果节点是我自己、或没有地址、或正在握手,则跳过
         if (node->flags &
             (CLUSTER_NODE_MYSELF|CLUSTER_NODE_NOADDR|CLUSTER_NODE_HANDSHAKE))
                 continue;
 
+        // 孤立master检查,在当前节点是salve的时候且要往其他节点迁移的时候是神有用的
         /* Orphaned master check, useful only if the current instance
          * is a slave that may migrate to another master. */
         if (nodeIsSlave(myself) && nodeIsMaster(node) && !nodeFailed(node)) {
             int okslaves = clusterCountNonFailingSlaves(node);
 
+            // 如果okslaves为0,且服务的slots数大于0,且正在迁移,则累加孤立master的个数
             /* A master is orphaned if it is serving a non-zero number of
              * slots, have no working slaves, but used to have at least one
              * slave, or failed over a master that used to have slaves. */
@@ -3668,6 +3675,8 @@ void clusterCron(void) {
                 this_slaves = okslaves;
         }
 
+        // 如果我们等待PONG超过的timeout的半数时间,则重新连接,有可能上次连接的时候出现了问题
+
         /* If we are waiting for the PONG more than half the cluster
          * timeout, reconnect the link: maybe there is a connection
          * issue even if the node is alive. */
@@ -3679,9 +3688,13 @@ void clusterCron(void) {
             /* and we are waiting for the pong more than timeout/2 */
             now - node->ping_sent > server.cluster_node_timeout/2)
         {
+            // 这里断开,后面会重连
             /* Disconnect the link, it will be reconnected automatically. */
             freeClusterLink(node->link);
         }
+
+        // 如果我们当前没有活跃的PING实例,并且接收到的pong时间大于半数的timeout时间,
+        // 则需要重新发送PING
 
         /* If we have currently no active ping in this instance, and the
          * received PONG is older than half the cluster timeout, send
@@ -3695,6 +3708,8 @@ void clusterCron(void) {
             continue;
         }
 
+        // 如果我是master,有某个slave请求mf,PING继续
+
         /* If we are a master and one of the slaves requested a manual
          * failover, ping it continuously. */
         if (server.cluster->mf_end &&
@@ -3706,17 +3721,23 @@ void clusterCron(void) {
             continue;
         }
 
+        // 仅当有活跃的PING实例的时候才检查
+
         /* Check only if we have an active ping for this instance. */
         if (node->ping_sent == 0) continue;
+
+        // 计算延迟的PONG
 
         /* Compute the delay of the PONG. Note that if we already received
          * the PONG, then node->ping_sent is zero, so can't reach this
          * code at all. */
         delay = now - node->ping_sent;
 
+        // 如果超过了timeout时间没有收到PONG
         if (delay > server.cluster_node_timeout) {
             /* Timeout reached. Set the node as possibly failing if it is
              * not already in this state. */
+            // 残酷地设置了FAIL标识
             if (!(node->flags & (CLUSTER_NODE_PFAIL|CLUSTER_NODE_FAIL))) {
                 serverLog(LL_DEBUG,"*** NODE %.40s possibly failing",
                     node->name);
@@ -3726,6 +3747,8 @@ void clusterCron(void) {
         }
     }
     dictReleaseIterator(di);
+
+    // 如果我是slave,但是我的master地址没有设置,说明还没有设置复制的master,这里需要设置一下
 
     /* If we are a slave node but the replication is still turned off,
      * enable it if we know the address of our master and it appears to
@@ -3738,12 +3761,16 @@ void clusterCron(void) {
         replicationSetMaster(myself->slaveof->ip, myself->slaveof->port);
     }
 
+    // 检查failover是否超时
     /* Abourt a manual failover if the timeout is reached. */
     manualFailoverCheckTimeout();
 
+    // 如果我是slave
     if (nodeIsSlave(myself)) {
+        // 处理MF
         clusterHandleManualFailover();
         clusterHandleSlaveFailover();
+        // 这里考虑slave迁移
         /* If there are orphaned slaves, and we are a slave among the masters
          * with the max number of non-failing slaves, consider migrating to
          * the orphaned masters. Note that it does not make sense to try
