@@ -1052,6 +1052,15 @@ int clusterBumpConfigEpochWithoutConsensus(void) {
     }
 }
 
+// 函数调用条件:当前节点为master,接收到其他master的消息,发现configEpoch一样。
+
+// 背景:
+// 多个slaves在failover选举的过程中,不可能获取相同的configEpoch,因为slaves需要获得大多数的master支持。
+
+// 当我们对cluster进行resharding的时候,node将会获取一个epoch。通常resharding发生的时候cluster工作
+// 正常并且有sysadmin支持,然而failover有可能发生
+
+
 /* This function is called when this node is a master, and we receive from
  * another master a configuration epoch that is equal to our configuration
  * epoch.
@@ -1102,6 +1111,7 @@ void clusterHandleConfigEpochCollision(clusterNode *sender) {
     /* Prerequisites: nodes have the same configEpoch and are both masters. */
     if (sender->configEpoch != myself->configEpoch ||
         !nodeIsMaster(sender) || !nodeIsMaster(myself)) return;
+    // 当我的nodeID比sender的nodeID小的时候,才更新我的configEpoch,这是为了保证最终node的configEpoch都不同
     /* Don't act if the colliding node has a smaller Node ID. */
     if (memcmp(sender->name,myself->name,CLUSTER_NAMELEN) <= 0) return;
     /* Get the next ID available at the best of this node knowledge. */
@@ -1258,6 +1268,8 @@ void markNodeAsFailingIfNeeded(clusterNode *node) {
     clusterDoBeforeSleep(CLUSTER_TODO_UPDATE_STATE|CLUSTER_TODO_SAVE_CONFIG);
 }
 
+// 这个函数只有在node被标志位FAIL的时候才会被调用
+
 /* This function is called only if a node is marked as FAIL, but we are able
  * to reach it again. It checks if there are the conditions to undo the FAIL
  * state. */
@@ -1265,6 +1277,8 @@ void clearNodeFailureIfNeeded(clusterNode *node) {
     mstime_t now = mstime();
 
     serverAssert(nodeFailed(node));
+
+    // 如果node是slave,或者没有服务slots则清空FAIL状态
 
     /* For slaves we always clear the FAIL flag if we can contact the
      * node again. */
@@ -1276,6 +1290,8 @@ void clearNodeFailureIfNeeded(clusterNode *node) {
         node->flags &= ~CLUSTER_NODE_FAIL;
         clusterDoBeforeSleep(CLUSTER_TODO_UPDATE_STATE|CLUSTER_TODO_SAVE_CONFIG);
     }
+    // 1) 如果是master
+    // 2) FAIL状态设置的足够老,说明?? 则清空FAIL标识
 
     /* If it is a master and...
      * 1) The FAIL state is old enough.
@@ -1622,6 +1638,8 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
 
             // 如果slot为importing状态,则只能由redis-trib来更新(例如resharding正在进行)
 
+            // slots迁移, from node A - > to node B
+
             /* The slot is in importing state, it should be modified only
              * manually via redis-trib (example: a resharding is in progress
              * and the migrating side slot was already closed and is advertising
@@ -1638,7 +1656,7 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
             if (server.cluster->slots[j] == NULL ||
                 server.cluster->slots[j]->configEpoch < senderConfigEpoch)
             {
-                // 如果slot是我自己的,且slot中有key,且sender不是我自己
+                // 如果slot是我自己的,且slot中有key,且sender不是我自己,这里应该在只有我是master的时候才有效?
                 /* Was this slot mine, and still contains keys? Mark it as
                  * a dirty slot. */
                 if (server.cluster->slots[j] == myself &&
@@ -1664,9 +1682,15 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
         }
     }
 
-    // 至少有一个slot原来是我的,现在是sender的了,且configEpoch比较大的时候:
+    // 至少有一个slot原来是我的(我就是master)或是我的master的,现在是sender(sender是master)的了,且configEpoch比较大的时候:
     // 1) 我是master,但是已经被failover,则重设master
     // 2) 我是slave,我们的master已经离去,重新复制slots
+
+    // 注意条件:
+    // slot归属于新的master
+    // 当前的master不在服务slots,说明被failover或者之前的master被failover
+
+    // slave不会有numslots?
 
     /* If at least one slot was reassigned from a node to another node
      * with a greater configEpoch, it is possible that:
@@ -1971,6 +1995,10 @@ int clusterProcessPacket(clusterLink *link) {
             link->node->pong_received = mstime();
             link->node->ping_sent = 0;
 
+            // PFAIL状态是可以回滚的,
+            // 如果被设置为timeout,也就是PFAIL状态,则清空PFAIL状态,因为又收到了消息,那么哪里设置PFAIL状态的呢?
+            // 如果被设置为FAIL,则检查是否需要清空FAIL状态
+
             /* The PFAIL condition can be reversed without external
              * help if it is momentary (that is, if it does not
              * turn into a FAIL state).
@@ -1982,6 +2010,7 @@ int clusterProcessPacket(clusterLink *link) {
                 clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
                                      CLUSTER_TODO_UPDATE_STATE);
             } else if (nodeFailed(link->node)) {
+                // 检查是否清空FAIL标记
                 clearNodeFailureIfNeeded(link->node);
             }
         }
@@ -2148,6 +2177,7 @@ int clusterProcessPacket(clusterLink *link) {
         robj *channel, *message;
         uint32_t channel_len, message_len;
 
+        // 首先查看是否有channels被订阅,如果没有则不处理
         /* Don't bother creating useless objects if there are no
          * Pub/Sub subscribers. */
         if (dictSize(server.pubsub_channels) ||
@@ -2160,6 +2190,7 @@ int clusterProcessPacket(clusterLink *link) {
             message = createStringObject(
                         (char*)hdr->data.publish.msg.bulk_data+channel_len,
                         message_len);
+            // 向指定channel发布消息
             pubsubPublishMessage(channel,message);
             decrRefCount(channel);
             decrRefCount(message);
@@ -2169,12 +2200,17 @@ int clusterProcessPacket(clusterLink *link) {
         clusterSendFailoverAuthIfNeeded(sender,hdr);
     } else if (type == CLUSTERMSG_TYPE_FAILOVER_AUTH_ACK) {
         if (!sender) return 1;  /* We don't know that node. */
+
+        // 要求消息是master发送过来的并且master有服务的slots且
+        // senderCurrentEpoch >= failover_auth_epoch
+        // failover_auth_epoch为当前选举的epoch
         /* We consider this vote only if the sender is a master serving
          * a non zero number of slots, and its currentEpoch is greater or
          * equal to epoch where this node started the election. */
         if (nodeIsMaster(sender) && sender->numslots > 0 &&
             senderCurrentEpoch >= server.cluster->failover_auth_epoch)
         {
+            // failover_auth_count++,当达到quorum数的时候进行failover
             server.cluster->failover_auth_count++;
             // 收到ACK,则设置failover标志位,下次beforeSleep的时候可以进行failover
 
@@ -2204,14 +2240,17 @@ int clusterProcessPacket(clusterLink *link) {
         if (!n) return 1;   /* We don't know the reported node. */
         if (n->configEpoch >= reportedConfigEpoch) return 1; /* Nothing new. */
 
+        // 在我们的配置里面,如果node是slave,则更新为master
         /* If in our current config the node is a slave, set it as a master. */
         if (nodeIsSlave(n)) clusterSetNodeAsMaster(n);
 
+        // 更新configEpoch
         /* Update the node's configEpoch. */
         n->configEpoch = reportedConfigEpoch;
         clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
                              CLUSTER_TODO_FSYNC_CONFIG);
 
+        // 更新slots配置
         /* Check the bitmap of served slots and update our
          * config accordingly. */
         clusterUpdateSlotsConfigWith(n,reportedConfigEpoch,
@@ -2744,6 +2783,7 @@ void clusterSendMFStart(clusterNode *node) {
     clusterSendMessage(node->link,buf,totlen);
 }
 
+
 /* Vote for the node asking for our vote if there are the conditions. */
 void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
     clusterNode *master = node->slaveof;
@@ -2753,11 +2793,15 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
     int force_ack = request->mflags[0] & CLUSTERMSG_FLAG0_FORCEACK;
     int j;
 
+    // 如果我不是master或者没有服务slots,则直接返回,master才接收REQUEST请求
+
     /* IF we are not a master serving at least 1 slot, we don't have the
      * right to vote, as the cluster size in Redis Cluster is the number
      * of masters serving at least one slot, and quorum is the cluster
      * size + 1 */
     if (nodeIsSlave(myself) || myself->numslots == 0) return;
+
+    // requestCurrentEpoch必须大于当前节点保存的currentEpoch
 
     /* Request epoch must be >= our currentEpoch.
      * Note that it is impossible for it to actually be greater since
@@ -2771,7 +2815,7 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
             (unsigned long long) server.cluster->currentEpoch);
         return;
     }
-
+    // 是否已经对当前的request
     /* I already voted for this epoch? Return ASAP. */
     if (server.cluster->lastVoteEpoch == server.cluster->currentEpoch) {
         serverLog(LL_WARNING,
@@ -2780,6 +2824,8 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
                 (unsigned long long) server.cluster->currentEpoch);
         return;
     }
+    // 当前sender是master或sender的master不知道是谁或(sender的master没有FAIL且不是force ack)
+    // 则返回
 
     /* Node must be a slave and its master down.
      * The master can be non failing if the request is flagged
@@ -2803,6 +2849,7 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
         return;
     }
 
+    // 在cluster_node_timeout * 2时间内不对同一个slave进行投票
     /* We did not voted for a slave about this master for two
      * times the node timeout. This is not strictly needed for correctness
      * of the algorithm but makes the base case more linear. */
@@ -2816,6 +2863,7 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
                              (mstime() - node->slaveof->voted_time)));
         return;
     }
+    // sender拥有的slots中国必须要有configEpoch小于等于requestConfigEpoch的slot
 
     /* The slave requesting the vote must have a configEpoch for the claimed
      * slots that is >= the one of the masters currently serving the same
@@ -2827,6 +2875,8 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
         {
             continue;
         }
+        // 如果到这里,我们发现我们保存的sender的slots都比sender的configEpoch要大
+
         /* If we reached this point we found a slot that in our current slots
          * is served by a master with a greater configEpoch than the one claimed
          * by the slave requesting our vote. Refuse to vote for this slave. */
@@ -2839,6 +2889,7 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
         return;
     }
 
+    // 这里对vote进行投票
     /* We can vote for this slave. */
     clusterSendFailoverAuth(node);
     server.cluster->lastVoteEpoch = server.cluster->currentEpoch;
@@ -2939,6 +2990,8 @@ void clusterLogCantFailover(int reason) {
     serverLog(LL_WARNING,"Currently unable to failover: %s", msg);
 }
 
+// 这个方法实现了failover的最后阶段,slave接管其master的slots且传播它的配置
+
 /* This function implements the final part of automatic and manual failovers,
  * where the slave grabs its master's hash slots, and propagates the new
  * configuration.
@@ -2947,14 +3000,18 @@ void clusterLogCantFailover(int reason) {
  * configuration epoch already. */
 void clusterFailoverReplaceYourMaster(void) {
     int j;
+    // 获取老的master
     clusterNode *oldmaster = myself->slaveof;
 
+    // 如果我是master或者没有老的master则退出
     if (nodeIsMaster(myself) || oldmaster == NULL) return;
 
+    // 将当前节点设置为master
     /* 1) Turn this node into a master. */
     clusterSetNodeAsMaster(myself);
     replicationUnsetMaster();
 
+    // 接管master的slots
     /* 2) Claim all the slots assigned to our master. */
     for (j = 0; j < CLUSTER_SLOTS; j++) {
         if (clusterNodeGetSlotBit(oldmaster,j)) {
@@ -2963,14 +3020,17 @@ void clusterFailoverReplaceYourMaster(void) {
         }
     }
 
+    // 更新状态和保存配置
     /* 3) Update state and save config. */
     clusterUpdateState();
     clusterSaveConfigOrDie(1);
 
+    // 广播这个喜讯,我当上master了
     /* 4) Pong all the other nodes so that they can update the state
      *    accordingly and detect that we switched to master role. */
     clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
 
+    // 如果有正在进行的failover,则清除状态
     /* 5) If there was a manual failover in progress, clear the state. */
     resetManualFailover();
 }
@@ -2997,7 +3057,7 @@ void clusterHandleSlaveFailover(void) {
                           server.cluster->mf_can_start;
     mstime_t auth_timeout, auth_retry_time;
 
-    // 收到ACK的时候是设置,这里是情况failover标记位
+    // 收到ACK的时候是设置,这里是清除failover标记位
 
     server.cluster->todo_before_sleep &= ~CLUSTER_TODO_HANDLE_FAILOVER;
 
@@ -3170,7 +3230,7 @@ void clusterHandleSlaveFailover(void) {
         return; /* Wait for replies. */
     }
 
-    // 检查是否达到了quorm,如果达到了,则可以结束这次failover了
+    // 检查是否达到了quorum,如果达到了,则可以结束这次failover了
 
     /* Check if we reached the quorum. */
     if (server.cluster->failover_auth_count >= needed_quorum) {

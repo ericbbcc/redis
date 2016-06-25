@@ -102,7 +102,7 @@ typedef struct clusterNode {
     mstime_t fail_time;      /* Unix time when FAIL flag was set */
     mstime_t voted_time;     /* Last time we voted for a slave of this master */
     mstime_t repl_offset_time;  /* Unix time we received offset for this node */
-    mstime_t orphaned_time;     /* Starting time of orphaned master condition */
+    mstime_t orphaned_time;     /* Starting time of orphaned master condition */ //orphaned 孤儿
     long long repl_offset;      /* Last known repl offset for this node. */
     char ip[NET_IP_STR_LEN];  /* Latest known IP address of this node */
     int port;                   /* Latest known clients port of this node */
@@ -198,6 +198,7 @@ typedef struct {
     /* We can't reclare bulk_data as bulk_data[] since this structure is
      * nested. The 8 bytes are removed from the count during the message
      * length computation. */
+    // channel_len + message_len
     unsigned char bulk_data[8];
 } clusterMsgDataPublish;
 
