@@ -1054,7 +1054,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb) {
             znode = zslInsert(zs->zsl,score,sdsele);
             dictAdd(zs->dict,sdsele,&znode->score);
         }
-
+        // 从文件返序列化的时候会检查是否需要转换
         /* Convert *after* loading, since sorted sets are not stored ordered. */
         if (zsetLength(o) <= server.zset_max_ziplist_entries &&
             maxelelen <= server.zset_max_ziplist_value)

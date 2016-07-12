@@ -1170,21 +1170,28 @@ void clusterBlacklistCleanup(void) {
     dictReleaseIterator(di);
 }
 
+// 清空黑名单,将一个新的节点添加到黑名单
+
 /* Cleanup the blacklist and add a new node ID to the black list. */
 void clusterBlacklistAddNode(clusterNode *node) {
     dictEntry *de;
     sds id = sdsnewlen(node->name,CLUSTER_NAMELEN);
 
+    // 情况黑名单
     clusterBlacklistCleanup();
+    // 将nodeid添加到黑名单
     if (dictAdd(server.cluster->nodes_black_list,id,NULL) == DICT_OK) {
         /* If the key was added, duplicate the sds string representation of
          * the key for the next lookup. We'll free it at the end. */
         id = sdsdup(id);
     }
+    // 设置一个TTL为一分钟(有什么用?)
     de = dictFind(server.cluster->nodes_black_list,id);
     dictSetUnsignedIntegerVal(de,time(NULL)+CLUSTER_BLACKLIST_TTL);
     sdsfree(id);
 }
+
+// 判断指定节点是否在黑名单中
 
 /* Return non-zero if the specified node ID exists in the blacklist.
  * You don't need to pass an sds string here, any pointer to 40 bytes
@@ -1488,7 +1495,7 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
              * joining another cluster. */
             if (sender &&
                 !(flags & CLUSTER_NODE_NOADDR) &&
-                !clusterBlacklistExists(g->nodename))
+                !clusterBlacklistExists(g->nodename))// 嘿嘿这里判断是否在黑名单中,然后决定是否重连
             {
                 clusterStartHandshake(g->ip,ntohs(g->port),ntohs(g->cport));
             }
@@ -3419,6 +3426,8 @@ void manualFailoverCheckTimeout(void) {
     }
 }
 
+// 这个函数被clusterCron调用,为了达到failover的状态
+
 /* This function is called from the cluster cron function in order to go
  * forward with a manual failover state machine. */
 void clusterHandleManualFailover(void) {
@@ -3432,6 +3441,7 @@ void clusterHandleManualFailover(void) {
     if (server.cluster->mf_master_offset == 0) return; /* Wait for offset... */
 
     if (server.cluster->mf_master_offset == replicationGetSlaveOffset()) {
+        // 我的复制offset和master的复制offset一致
         /* Our replication offset matches the master replication offset
          * announced after clients were paused. We can start the failover. */
         server.cluster->mf_can_start = 1;
@@ -3708,7 +3718,7 @@ void clusterCron(void) {
             continue;
         }
 
-        // 如果我是master,有某个slave请求mf,PING继续
+        // 如果我是master,这个slave节点发起了了failover,PING继续
 
         /* If we are a master and one of the slaves requested a manual
          * failover, ping it continuously. */
@@ -3721,7 +3731,7 @@ void clusterCron(void) {
             continue;
         }
 
-        // 仅当有活跃的PING实例的时候才检查
+        // 仅当没有活跃的PING实例的时候才检查
 
         /* Check only if we have an active ping for this instance. */
         if (node->ping_sent == 0) continue;
@@ -3784,27 +3794,36 @@ void clusterCron(void) {
         clusterUpdateState();
 }
 
+// 这个函数在每次beforeSleep的时候被调用,这里可以做一些下次处理IO事件之前需要做的事情
+// 但是不适合做一些耗时比较长的事情
+
 /* This function is called before the event handler returns to sleep for
  * events. It is useful to perform operations that must be done ASAP in
  * reaction to events fired but that are not safe to perform inside event
  * handlers, or to perform potentially expansive tasks that we need to do
  * a single time before replying to clients. */
 void clusterBeforeSleep(void) {
+    // 处理failover,特别是当masters的投票足够的时候在这里处理
+
     /* Handle failover, this is needed when it is likely that there is already
      * the quorum from masters in order to react fast. */
     if (server.cluster->todo_before_sleep & CLUSTER_TODO_HANDLE_FAILOVER)
         clusterHandleSlaveFailover();
 
+    // 更新集群状态
     /* Update the cluster state. */
     if (server.cluster->todo_before_sleep & CLUSTER_TODO_UPDATE_STATE)
         clusterUpdateState();
 
+    // 保存配置,可能使用fsync
     /* Save the config, possibly using fsync. */
     if (server.cluster->todo_before_sleep & CLUSTER_TODO_SAVE_CONFIG) {
         int fsync = server.cluster->todo_before_sleep &
                     CLUSTER_TODO_FSYNC_CONFIG;
         clusterSaveConfigOrDie(fsync);
     }
+
+    // 重新设置before_sleep状态,说明这次已经处理完毕
 
     /* Reset our flags (not strictly needed since every single function
      * called for flags set should be able to clear its flag). */
@@ -4363,12 +4382,15 @@ void clusterReplyMultiBulkSlots(client *c) {
     setDeferredMultiBulkLength(c, slot_replylen, num_masters);
 }
 
+// cluster 相关命令处理
 void clusterCommand(client *c) {
+    // 如果不是集群模式,则不支持该命令
     if (server.cluster_enabled == 0) {
         addReplyError(c,"This instance has cluster support disabled");
         return;
     }
-
+    // cluster meet命令
+    // cluster meet ip port cport
     if (!strcasecmp(c->argv[1]->ptr,"meet") && (c->argc == 4 || c->argc == 5)) {
         /* CLUSTER MEET <ip> <port> [cport] */
         long long port, cport;
@@ -4388,15 +4410,17 @@ void clusterCommand(client *c) {
         } else {
             cport = port + CLUSTER_PORT_INCR;
         }
-
+        // 执行和ip port cport进行握手
         if (clusterStartHandshake(c->argv[2]->ptr,port,cport) == 0 &&
             errno == EINVAL)
         {
             addReplyErrorFormat(c,"Invalid node address specified: %s:%s",
                             (char*)c->argv[2]->ptr, (char*)c->argv[3]->ptr);
         } else {
+            // 握手成功
             addReply(c,shared.ok);
         }
+    // cluster nodes
     } else if (!strcasecmp(c->argv[1]->ptr,"nodes") && c->argc == 2) {
         /* CLUSTER NODES */
         robj *o;
@@ -4405,9 +4429,11 @@ void clusterCommand(client *c) {
         o = createObject(OBJ_STRING,ci);
         addReplyBulk(c,o);
         decrRefCount(o);
+    // cluster myid
     } else if (!strcasecmp(c->argv[1]->ptr,"myid") && c->argc == 2) {
         /* CLUSTER MYID */
         addReplyBulkCBuffer(c,myself->name, CLUSTER_NAMELEN);
+    // cluster slots
     } else if (!strcasecmp(c->argv[1]->ptr,"slots") && c->argc == 2) {
         /* CLUSTER SLOTS */
         clusterReplyMultiBulkSlots(c);
@@ -4430,6 +4456,7 @@ void clusterCommand(client *c) {
         int del = !strcasecmp(c->argv[1]->ptr,"delslots");
 
         memset(slots,0,CLUSTER_SLOTS);
+        // cluster addslots 8
         /* Check that all the arguments are parseable and that all the
          * slots are not already busy. */
         for (j = 2; j < c->argc; j++) {
@@ -4482,19 +4509,24 @@ void clusterCommand(client *c) {
             addReplyError(c,"Please use SETSLOT only with masters.");
             return;
         }
-
+        // 获取指定slot
         if ((slot = getSlotOrReply(c,c->argv[2])) == -1) return;
 
+        // cluster setslot 10 migrating node-id
         if (!strcasecmp(c->argv[3]->ptr,"migrating") && c->argc == 5) {
+            // 如果slot本来不是我的,则返回失败
             if (server.cluster->slots[slot] != myself) {
                 addReplyErrorFormat(c,"I'm not the owner of hash slot %u",slot);
                 return;
             }
+            // 找到将要迁移过去的那个node
             if ((n = clusterLookupNode(c->argv[4]->ptr)) == NULL) {
                 addReplyErrorFormat(c,"I don't know about node %s",
                     (char*)c->argv[4]->ptr);
                 return;
             }
+
+            // 仅仅是设置slot到node的映射,并没有做别的事情
             server.cluster->migrating_slots_to[slot] = n;
         } else if (!strcasecmp(c->argv[3]->ptr,"importing") && c->argc == 5) {
             if (server.cluster->slots[slot] == myself) {
@@ -4507,11 +4539,14 @@ void clusterCommand(client *c) {
                     (char*)c->argv[3]->ptr);
                 return;
             }
+            // 仅仅是设置slot到node的映射,并没有做别的事情
             server.cluster->importing_slots_from[slot] = n;
         } else if (!strcasecmp(c->argv[3]->ptr,"stable") && c->argc == 4) {
+            // 仅仅是情况slot的MIGRATING或IMPORTING状态,并没有做别的事情
             /* CLUSTER SETSLOT <SLOT> STABLE */
             server.cluster->importing_slots_from[slot] = NULL;
             server.cluster->migrating_slots_to[slot] = NULL;
+        // cluster setslot 10 node node-id命令
         } else if (!strcasecmp(c->argv[3]->ptr,"node") && c->argc == 5) {
             /* CLUSTER SETSLOT <SLOT> NODE <NODE ID> */
             clusterNode *n = clusterLookupNode(c->argv[4]->ptr);
@@ -4521,6 +4556,7 @@ void clusterCommand(client *c) {
                     (char*)c->argv[4]->ptr);
                 return;
             }
+            // 如果slots本来就是我的,执行迁移之前确保我的slots里面没有key
             /* If this hash slot was served by 'myself' before to switch
              * make sure there are no longer local keys for this hash slot. */
             if (server.cluster->slots[slot] == myself && n != myself) {
@@ -4531,6 +4567,7 @@ void clusterCommand(client *c) {
                     return;
                 }
             }
+            // 如果slot是处于migrating状态,且没有key在slot中,则清除migrating状态
             /* If this slot is in migrating status but we have no keys
              * for it assigning the slot to another node will clear
              * the migratig status. */
@@ -4538,6 +4575,7 @@ void clusterCommand(client *c) {
                 server.cluster->migrating_slots_to[slot])
                 server.cluster->migrating_slots_to[slot] = NULL;
 
+            // 如果是迁移到我这边,并且slot处于importing状态
             /* If this node was importing this slot, assigning the slot to
              * itself also clears the importing status. */
             if (n == myself &&
@@ -4558,13 +4596,16 @@ void clusterCommand(client *c) {
                 }
                 server.cluster->importing_slots_from[slot] = NULL;
             }
+            // 删除slot
             clusterDelSlot(slot);
+            // 添加slot到指定node
             clusterAddSlot(n,slot);
         } else {
             addReplyError(c,
                 "Invalid CLUSTER SETSLOT action or number of arguments");
             return;
         }
+        // 下次保存配置
         clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|CLUSTER_TODO_UPDATE_STATE);
         addReply(c,shared.ok);
     } else if (!strcasecmp(c->argv[1]->ptr,"bumpepoch") && c->argc == 2) {
@@ -4650,6 +4691,7 @@ void clusterCommand(client *c) {
             return;
         }
         addReplyLongLong(c,countKeysInSlot(slot));
+    // cluster getkeysinslot slot count
     } else if (!strcasecmp(c->argv[1]->ptr,"getkeysinslot") && c->argc == 4) {
         /* CLUSTER GETKEYSINSLOT <slot> <count> */
         long long maxkeys, slot;
@@ -4688,7 +4730,9 @@ void clusterCommand(client *c) {
             addReplyError(c,"Can't forget my master!");
             return;
         }
+        // 把指定节点加入黑名单
         clusterBlacklistAddNode(n);
+        // 删除节点
         clusterDelNode(n);
         clusterDoBeforeSleep(CLUSTER_TODO_UPDATE_STATE|
                              CLUSTER_TODO_SAVE_CONFIG);

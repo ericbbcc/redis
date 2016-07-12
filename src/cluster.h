@@ -119,6 +119,7 @@ typedef struct clusterState {
     int size;             /* Num of master nodes with at least one slot */
     dict *nodes;          /* Hash table of name -> clusterNode structures */
     dict *nodes_black_list; /* Nodes we don't re-add for a few seconds. */
+    // slot到将要迁移过去的那个节点的映射
     clusterNode *migrating_slots_to[CLUSTER_SLOTS];
     clusterNode *importing_slots_from[CLUSTER_SLOTS];
     clusterNode *slots[CLUSTER_SLOTS];

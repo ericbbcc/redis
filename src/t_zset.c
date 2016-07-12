@@ -66,6 +66,8 @@
 int zslLexValueGteMin(sds value, zlexrangespec *spec);
 int zslLexValueLteMax(sds value, zlexrangespec *spec);
 
+// 创建一个指定lever的节点,节点关联指定sds
+
 /* Create a skiplist node with the specified number of levels.
  * The SDS string 'ele' is referenced by the node after the call. */
 zskiplistNode *zslCreateNode(int level, double score, sds ele) {
@@ -126,6 +128,7 @@ int zslRandomLevel(void) {
     return (level<ZSKIPLIST_MAXLEVEL) ? level : ZSKIPLIST_MAXLEVEL;
 }
 
+// 往跳跃表新添加一个node,假设node还不存在,跳跃表里面只存储key的sds
 /* Insert a new node in the skiplist. Assumes the element does not already
  * exist (up to the caller to enforce that). The skiplist takes ownership
  * of the passed SDS string 'ele'. */
@@ -268,6 +271,8 @@ int zslIsInRange(zskiplist *zsl, zrangespec *range) {
         return 0;
     return 1;
 }
+
+// 查找指定范围中的第一个节点,当没有值的时候返回NULL
 
 /* Find the first node that is contained in the specified range.
  * Returns NULL when no element is contained in the range. */
@@ -1183,6 +1188,8 @@ void zsetConvert(robj *zobj, int encoding) {
     }
 }
 
+// 转换有序集合为压缩列表(什么时候会转换呢?)
+
 /* Convert the sorted set object into a ziplist if it is not already a ziplist
  * and if the number of elements and the maximum element size is within the
  * expected ranges. */
@@ -1214,6 +1221,14 @@ int zsetScore(robj *zobj, sds member, double *score) {
     }
     return C_OK;
 }
+
+// 添加一个新元素,或者更新有序集合中一个已有元素的score,忽略编码。
+//
+// 不同的flags不同的命令:
+// ZADD_INCR:代表用score累加原有的score,而不是更新。
+// ZADD_NX:元素不存在的时候才会执行操作。
+// ZADD_XX:元素存在的时候才会执行操作。
+
 
 /* Add a new element or update the score of an existing element in a sorted
  * set, regardless of its encoding.
@@ -1271,11 +1286,12 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
         *flags = ZADD_NAN;
         return 0;
     }
+    // 如果是压缩列表
 
     /* Update the sorted set according to its encoding. */
     if (zobj->encoding == OBJ_ENCODING_ZIPLIST) {
         unsigned char *eptr;
-
+        // 如果存在
         if ((eptr = zzlFind(zobj->ptr,ele,&curscore)) != NULL) {
             /* NX? Return, same element already exists. */
             if (nx) {
@@ -1292,7 +1308,7 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
                 }
                 if (newscore) *newscore = score;
             }
-
+            // 当score相同的时候,删除并重新插入
             /* Remove and re-insert when score changed. */
             if (score != curscore) {
                 zobj->ptr = zzlDelete(zobj->ptr,eptr);
@@ -1300,12 +1316,16 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
                 *flags |= ZADD_UPDATED;
             }
             return 1;
+        // 如果不存在,且不是存在才操作
         } else if (!xx) {
+            // 优化: 检查元素是否是太大,插入的时候有可能会转换为跳跃
             /* Optimize: check if the element is too large or the list
              * becomes too long *before* executing zzlInsert. */
             zobj->ptr = zzlInsert(zobj->ptr,ele,score);
+            // 如果集合长度大于指定数则发生编码转换
             if (zzlLength(zobj->ptr) > server.zset_max_ziplist_entries)
                 zsetConvert(zobj,OBJ_ENCODING_SKIPLIST);
+            // 如果新插入的值长度大于一定值,则发生转换
             if (sdslen(ele) > server.zset_max_ziplist_value)
                 zsetConvert(zobj,OBJ_ENCODING_SKIPLIST);
             if (newscore) *newscore = score;
@@ -1315,6 +1335,7 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
             *flags |= ZADD_NOP;
             return 1;
         }
+    // 如果是跳跃列表
     } else if (zobj->encoding == OBJ_ENCODING_SKIPLIST) {
         zset *zs = zobj->ptr;
         zskiplistNode *znode;
@@ -1343,6 +1364,7 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
             if (score != curscore) {
                 zskiplistNode *node;
                 serverAssert(zslDelete(zs->zsl,curscore,ele,&node));
+                // 插入
                 znode = zslInsert(zs->zsl,score,node->ele);
                 /* We reused the node->ele SDS string, free the node now
                  * since zslInsert created a new one. */
@@ -1372,9 +1394,12 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
     return 0; /* Never reached. */
 }
 
+// 从有序集合中删除
+
 /* Delete the element 'ele' from the sorted set, returning 1 if the element
  * existed and was deleted, 0 otherwise (the element was not there). */
 int zsetDel(robj *zobj, sds ele) {
+    // 压缩列表
     if (zobj->encoding == OBJ_ENCODING_ZIPLIST) {
         unsigned char *eptr;
 
@@ -1382,6 +1407,7 @@ int zsetDel(robj *zobj, sds ele) {
             zobj->ptr = zzlDelete(zobj->ptr,eptr);
             return 1;
         }
+    // 跳跃表
     } else if (zobj->encoding == OBJ_ENCODING_SKIPLIST) {
         zset *zs = zobj->ptr;
         dictEntry *de;
@@ -1479,6 +1505,9 @@ long zsetRank(robj *zobj, sds ele, int reverse) {
     }
 }
 
+// 有序集合的set操作
+// zadd key score value
+
 /*-----------------------------------------------------------------------------
  * Sorted set commands
  *----------------------------------------------------------------------------*/
@@ -1503,6 +1532,7 @@ void zaddGenericCommand(client *c, int flags) {
     /* Parse options. At the end 'scoreidx' is set to the argument position
      * of the score of the first score-element pair. */
     scoreidx = 2;
+    // 获取选项
     while(scoreidx < c->argc) {
         char *opt = c->argv[scoreidx]->ptr;
         if (!strcasecmp(opt,"nx")) flags |= ZADD_NX;
@@ -1519,6 +1549,8 @@ void zaddGenericCommand(client *c, int flags) {
     int xx = (flags & ZADD_XX) != 0;
     int ch = (flags & ZADD_CH) != 0;
 
+    // 选项后面是奇数个参数
+
     /* After the options, we expect to have an even number of args, since
      * we expect any number of score-element pairs. */
     elements = c->argc-scoreidx;
@@ -1526,6 +1558,7 @@ void zaddGenericCommand(client *c, int flags) {
         addReply(c,shared.syntaxerr);
         return;
     }
+    // 有多少对
     elements /= 2; /* Now this holds the number of score-element pairs. */
 
     /* Check for incompatible options. */
@@ -1553,12 +1586,22 @@ void zaddGenericCommand(client *c, int flags) {
     /* Lookup the key and create the sorted set if does not exist. */
     zobj = lookupKeyWrite(c->db,key);
     if (zobj == NULL) {
+        // 这里判断选择何种类型作为底层数据结构
+        // XX选项表示key存在才执行操作
         if (xx) goto reply_to_client; /* No key + XX option: nothing to do. */
+
+        // 当zset_max_ziplist_entries等于0的时候(zset_max_ziplist_entries的默认值为128)
+        // 或value长度大于64的时候,用压缩列表
+        // 当压缩列表长度大于128的时候,转换为跳跃
+        // 当跳跃表的长度小于等于128的时候,且最大值长度小于等于64的时候转换为压缩
+        // 压缩适合数量小值长度小
         if (server.zset_max_ziplist_entries == 0 ||
             server.zset_max_ziplist_value < sdslen(c->argv[scoreidx+1]->ptr))
         {
+            // 使用压缩表
             zobj = createZsetObject();
         } else {
+            // 使用跳跃表
             zobj = createZsetZiplistObject();
         }
         dbAdd(c->db,key,zobj);
@@ -1613,6 +1656,8 @@ void zaddCommand(client *c) {
 void zincrbyCommand(client *c) {
     zaddGenericCommand(c,ZADD_INCR);
 }
+
+// 从有序集合中删除某个键
 
 void zremCommand(client *c) {
     robj *key = c->argv[1];

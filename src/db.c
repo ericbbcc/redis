@@ -1271,6 +1271,7 @@ int *migrateGetKeys(struct redisCommand *cmd, robj **argv, int argc, int *numkey
  * a fast way a key that belongs to a specified hash slot. This is useful
  * while rehashing the cluster. */
 void slotToKeyAdd(robj *key) {
+    //根据key计算slot
     unsigned int hashslot = keyHashSlot(key->ptr,sdslen(key->ptr));
 
     sds sdskey = sdsdup(key->ptr);
@@ -1286,7 +1287,7 @@ void slotToKeyFlush(void) {
     zslFree(server.cluster->slots_to_keys);
     server.cluster->slots_to_keys = zslCreate();
 }
-
+// 构造指定slot中的键集合
 /* Pupulate the specified array of objects with keys in the specified slot.
  * New objects are returned to represent keys, it's up to the caller to
  * decrement the reference count to release the keys names. */
@@ -1297,7 +1298,7 @@ unsigned int getKeysInSlot(unsigned int hashslot, robj **keys, unsigned int coun
 
     range.min = range.max = hashslot;
     range.minex = range.maxex = 0;
-
+    // 跳跃表
     n = zslFirstInRange(server.cluster->slots_to_keys, &range);
     while(n && n->score == hashslot && count--) {
         keys[j++] = createStringObject(n->ele,sdslen(n->ele));
