@@ -217,6 +217,7 @@ robj *createZsetObject(void) {
 robj *createZsetZiplistObject(void) {
     unsigned char *zl = ziplistNew();
     robj *o = createObject(OBJ_ZSET,zl);
+    // 压缩列表
     o->encoding = OBJ_ENCODING_ZIPLIST;
     return o;
 }

@@ -442,11 +442,11 @@ typedef long long mstime_t; /* millisecond time type. */
 /* A redis object, that is a type able to hold a string / list / set */
 
 /* The actual Redis Object */
-#define OBJ_STRING 0
-#define OBJ_LIST 1
-#define OBJ_SET 2
-#define OBJ_ZSET 3
-#define OBJ_HASH 4
+#define OBJ_STRING 0    //  字符串对象
+#define OBJ_LIST 1      //  列表对象
+#define OBJ_SET 2       //  集合对象
+#define OBJ_ZSET 3      //  有序集合对象
+#define OBJ_HASH 4      //  哈希对象
 
 /* Objects encoding. Some kind of objects like Strings and Hashes can be
  * internally represented in multiple ways. The 'encoding' field of the object

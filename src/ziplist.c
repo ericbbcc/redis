@@ -315,8 +315,13 @@ static int zipPrevLenByteDiff(unsigned char *p, unsigned int len) {
     return zipPrevEncodeLength(NULL, len) - prevlensize;
 }
 
+// 返回p指定的entry的长度,字节单位
+// entry组成:
+// 上一个几点的长度,1字节或者5字节    |   当前entry的编码和长度、1、2或5字节   |   当先entry的内容
+
 /* Return the total number of bytes used by the entry pointed to by 'p'. */
 static unsigned int zipRawEntryLength(unsigned char *p) {
+    // 为1字节或者5字节,表示前一个节点的长度
     unsigned int prevlensize, encoding, lensize, len;
     ZIP_DECODE_PREVLENSIZE(p, prevlensize);
     ZIP_DECODE_LENGTH(p + prevlensize, encoding, lensize, len);
@@ -424,7 +429,7 @@ static void zipEntry(unsigned char *p, zlentry *e) {
 
 /* Create a new empty ziplist. */
 unsigned char *ziplistNew(void) {
-    unsigned int bytes = ZIPLIST_HEADER_SIZE+1;
+    unsigned int bytes = ZIPLIST_HEADER_SIZE+1; // 4 + 4 + 2 + 1 = 11字节
     unsigned char *zl = zmalloc(bytes);
     ZIPLIST_BYTES(zl) = intrev32ifbe(bytes);
     ZIPLIST_TAIL_OFFSET(zl) = intrev32ifbe(ZIPLIST_HEADER_SIZE);
@@ -794,6 +799,8 @@ unsigned char *ziplistPush(unsigned char *zl, unsigned char *s, unsigned int sle
     return __ziplistInsert(zl,p,s,slen);
 }
 
+// 返回指定索引位置的offset,当index为负的时候,表示从back到front。
+
 /* Returns an offset to use for iterating with ziplistNext. When the given
  * index is negative, the list is traversed back to front. When the list
  * doesn't contain an element at the provided index, NULL is returned. */
@@ -811,6 +818,7 @@ unsigned char *ziplistIndex(unsigned char *zl, int index) {
             }
         }
     } else {
+        // entry开始的offset
         p = ZIPLIST_ENTRY_HEAD(zl);
         while (p[0] != ZIP_END && index--) {
             p += zipRawEntryLength(p);
@@ -861,6 +869,10 @@ unsigned char *ziplistPrev(unsigned char *zl, unsigned char *p) {
         return p-prevlen;
     }
 }
+
+// 获取p指向的entry的节点信息
+// 如果:编码是字符串类型,则内容由sstr带出、长度由slen带出
+// 如果:编码是整型,则内容由sval带出
 
 /* Get entry pointed to by 'p' and store in either '*sstr' or 'sval' depending
  * on the encoding of the entry. '*sstr' is always set to NULL to be able

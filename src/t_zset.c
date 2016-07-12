@@ -679,7 +679,7 @@ double zzlGetScore(unsigned char *sptr) {
 
     serverAssert(sptr != NULL);
     serverAssert(ziplistGet(sptr,&vstr,&vlen,&vlong));
-
+    // 如果内容为字符串
     if (vstr) {
         memcpy(buf,vstr,vlen);
         buf[vlen] = '\0';
@@ -1004,20 +1004,25 @@ unsigned char *zzlInsertAt(unsigned char *zl, unsigned char *eptr, sds ele, doub
 /* Insert (element,score) pair in ziplist. This function assumes the element is
  * not yet present in the list. */
 unsigned char *zzlInsert(unsigned char *zl, sds ele, double score) {
+    // 获取指定index的offset
     unsigned char *eptr = ziplistIndex(zl,0), *sptr;
     double s;
 
+    // 这里遍历压缩列表的每一个节点
     while (eptr != NULL) {
         sptr = ziplistNext(zl,eptr);
         serverAssert(sptr != NULL);
+        // 获取score
         s = zzlGetScore(sptr);
-
+        // 如果节点原来的score大于传入的score
+        // 表示可以插入了
         if (s > score) {
             /* First element with score larger than score for element to be
              * inserted. This means we should take its spot in the list to
              * maintain ordering. */
             zl = zzlInsertAt(zl,eptr,ele,score);
             break;
+        // 如果节点的分值和传入的分值相等
         } else if (s == score) {
             /* Ensure lexicographical ordering for elements. */
             if (zzlCompareElements(eptr,(unsigned char*)ele,sdslen(ele)) > 0) {
@@ -1025,7 +1030,7 @@ unsigned char *zzlInsert(unsigned char *zl, sds ele, double score) {
                 break;
             }
         }
-
+        // 中间跳过一个节点
         /* Move to next element. */
         eptr = ziplistNext(zl,sptr);
     }
@@ -1598,10 +1603,10 @@ void zaddGenericCommand(client *c, int flags) {
         if (server.zset_max_ziplist_entries == 0 ||
             server.zset_max_ziplist_value < sdslen(c->argv[scoreidx+1]->ptr))
         {
-            // 使用压缩表
+            // 使用跳跃表
             zobj = createZsetObject();
         } else {
-            // 使用跳跃表
+            // 使用压缩表
             zobj = createZsetZiplistObject();
         }
         dbAdd(c->db,key,zobj);
