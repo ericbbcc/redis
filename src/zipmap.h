@@ -34,15 +34,23 @@
 
 #ifndef _ZIPMAP_H
 #define _ZIPMAP_H
-
+// 创建一个新的zipmap
 unsigned char *zipmapNew(void);
+// 指定zm的key设置或更新val
 unsigned char *zipmapSet(unsigned char *zm, unsigned char *key, unsigned int klen, unsigned char *val, unsigned int vlen, int *update);
+// 删除指定zm的key
 unsigned char *zipmapDel(unsigned char *zm, unsigned char *key, unsigned int klen, int *deleted);
+// 迭代之前调用
 unsigned char *zipmapRewind(unsigned char *zm);
+// 用来迭代zipmap中的元素
 unsigned char *zipmapNext(unsigned char *zm, unsigned char **key, unsigned int *klen, unsigned char **value, unsigned int *vlen);
+// 获取指定key的值
 int zipmapGet(unsigned char *zm, unsigned char *key, unsigned int klen, unsigned char **value, unsigned int *vlen);
+// 指定key是否存在
 int zipmapExists(unsigned char *zm, unsigned char *key, unsigned int klen);
+// zipmap的长度
 unsigned int zipmapLen(unsigned char *zm);
+// zipmap的字节长度
 size_t zipmapBlobLen(unsigned char *zm);
 void zipmapRepr(unsigned char *p);
 
