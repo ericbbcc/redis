@@ -31,6 +31,10 @@
 #ifndef __QUICKLIST_H__
 #define __QUICKLIST_H__
 
+// 这里是quicklist的节点
+// count: 表示当前节点的压缩列表中有多少个元素
+// encoding:
+
 /* Node, quicklist, and Iterator are the only data structures used currently. */
 
 /* quicklistNode is a 32 byte struct describing a ziplist for a quicklist.
@@ -64,6 +68,11 @@ typedef struct quicklistLZF {
     char compressed[];
 } quicklistLZF;
 
+// quicklist是一个32字节的数据结构
+// count代表元素的个数
+// len代表quicklist的节点
+// compress:如果不允许压缩,则值为-1
+
 /* quicklist is a 32 byte struct (on 64-bit systems) describing a quicklist.
  * 'count' is the number of total entries.
  * 'len' is the number of quicklist nodes.
@@ -73,8 +82,11 @@ typedef struct quicklistLZF {
 typedef struct quicklist {
     quicklistNode *head;
     quicklistNode *tail;
+    // 表示一共有多少个元素,所有压缩列表中的所有元素
     unsigned long count;        /* total count of all entries in all ziplists */
+    // 表示quicklist中一共有多少个节点
     unsigned int len;           /* number of quicklistNodes */
+    // 每个节点的fill actor
     int fill : 16;              /* fill factor for individual nodes */
     unsigned int compress : 16; /* depth of end nodes not to compress;0=off */
 } quicklist;
@@ -115,6 +127,7 @@ typedef struct quicklistEntry {
     ((node)->encoding == QUICKLIST_NODE_ENCODING_LZF)
 
 /* Prototypes */
+// 创建一个quicklist
 quicklist *quicklistCreate(void);
 quicklist *quicklistNew(int fill, int compress);
 void quicklistSetCompressDepth(quicklist *quicklist, int depth);

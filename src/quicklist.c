@@ -89,6 +89,8 @@ static const size_t optimization_level[] = {4096, 8192, 16384, 32768, 65536};
 #define unlikely(x) (x)
 #endif
 
+// 创建一个quicklist
+
 /* Create a new quicklist.
  * Free with quicklistRelease(). */
 quicklist *quicklistCreate(void) {
@@ -113,6 +115,8 @@ void quicklistSetCompressDepth(quicklist *quicklist, int compress) {
     quicklist->compress = compress;
 }
 
+// fill的范围 [-5, 1 << 15]
+
 #define FILL_MAX (1 << 15)
 void quicklistSetFill(quicklist *quicklist, int fill) {
     if (fill > FILL_MAX) {
@@ -127,6 +131,8 @@ void quicklistSetOptions(quicklist *quicklist, int fill, int depth) {
     quicklistSetFill(quicklist, fill);
     quicklistSetCompressDepth(quicklist, depth);
 }
+
+// 通过一些默认参数构造quicklist
 
 /* Create a new quicklist with some default parameters. */
 quicklist *quicklistNew(int fill, int compress) {

@@ -33,6 +33,8 @@
  * List API
  *----------------------------------------------------------------------------*/
 
+// 这个方法
+
 /* The function pushes an element to the specified list object 'subject',
  * at head or tail position as specified by 'where'.
  *
@@ -207,6 +209,8 @@ void pushGenericCommand(client *c, int where) {
         c->argv[j] = tryObjectEncoding(c->argv[j]);
         if (!lobj) {
             lobj = createQuicklistObject();
+            // 设置每个列表节点的压缩列表的大小展示
+            // 设置压缩深度
             quicklistSetOptions(lobj->ptr, server.list_max_ziplist_size,
                                 server.list_compress_depth);
             dbAdd(c->db,c->argv[1],lobj);
@@ -221,6 +225,7 @@ void pushGenericCommand(client *c, int where) {
         signalModifiedKey(c->db,c->argv[1]);
         notifyKeyspaceEvent(NOTIFY_LIST,event,c->argv[1],c->db->id);
     }
+    // 缓存数据改变,表示脏数据产生
     server.dirty += pushed;
 }
 
