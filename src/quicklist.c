@@ -1405,6 +1405,8 @@ int quicklistPop(quicklist *quicklist, int where, unsigned char **data,
     return ret;
 }
 
+// 将元素放入list
+
 /* Wrapper to allow argument-based switching between HEAD/TAIL pop */
 void quicklistPush(quicklist *quicklist, void *value, const size_t sz,
                    int where) {

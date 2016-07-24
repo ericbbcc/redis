@@ -8,6 +8,9 @@
  *
  * ----------------------------------------------------------------------------
  *
+ * 压缩列表:
+ * 压缩列表的内存布局
+ *
  * ZIPLIST OVERALL LAYOUT:
  * The general layout of the ziplist is as follows:
  * <zlbytes><zltail><zllen><entry><entry><zlend>

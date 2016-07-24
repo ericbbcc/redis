@@ -33,7 +33,7 @@
  * List API
  *----------------------------------------------------------------------------*/
 
-// 这个方法
+// 这个方法将一个元素放入指定的列表对象,放在队头或队尾
 
 /* The function pushes an element to the specified list object 'subject',
  * at head or tail position as specified by 'where'.
@@ -41,6 +41,7 @@
  * There is no need for the caller to increment the refcount of 'value' as
  * the function takes care of it if needed. */
 void listTypePush(robj *subject, robj *value, int where) {
+    // 如果是quicklist编码,则正确
     if (subject->encoding == OBJ_ENCODING_QUICKLIST) {
         int pos = (where == LIST_HEAD) ? QUICKLIST_HEAD : QUICKLIST_TAIL;
         value = getDecodedObject(value);
