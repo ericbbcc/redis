@@ -83,6 +83,7 @@ void flagTransaction(client *c) {
         c->flags |= CLIENT_DIRTY_EXEC;
 }
 
+// 处理客户端的multi命令,这里仅仅将c-flags的multi位设置为1
 void multiCommand(client *c) {
     if (c->flags & CLIENT_MULTI) {
         addReplyError(c,"MULTI calls can not be nested");

@@ -2433,6 +2433,11 @@ int processCommand(client *c) {
         }
     }
 
+    // 如果设置了maxmemory参数
+    // 首先调用freeMemoryIfNeed()来根据不同的键空间淘汰策略释放内存
+    // 客户端连接有可能被释放掉
+    // 如果释放内存失败、则报OOM错
+
     /* Handle the maxmemory directive.
      *
      * First we try to free some memory if possible (if there are volatile
@@ -2541,6 +2546,7 @@ int processCommand(client *c) {
         addReply(c, shared.slowscripterr);
         return C_OK;
     }
+    // 如果客户端是multi模式
 
     /* Exec the command */
     if (c->flags & CLIENT_MULTI &&
@@ -3478,8 +3484,11 @@ void evictionPoolPopulate(dict *sampledict, dict *keydict, struct evictionPoolEn
     if (samples != _samples) zfree(samples);
 }
 
+// 用于键空间淘汰的时候释放内存
+
 int freeMemoryIfNeeded(void) {
     size_t mem_reported, mem_used, mem_tofree, mem_freed;
+    // slaves个数
     int slaves = listLength(server.slaves);
     mstime_t latency, eviction_latency;
     long long delta;
@@ -3488,6 +3497,8 @@ int freeMemoryIfNeeded(void) {
      * to subtract the slaves output buffers. We can just return ASAP. */
     mem_reported = zmalloc_used_memory();
     if (mem_reported <= server.maxmemory) return C_OK;
+
+    // 这里只是将slaves的输出缓冲区和AOF缓冲区占用的内存空间忽略不计
 
     /* Remove the size of slaves output buffers and AOF buffer from the
      * count of used memory. */
@@ -3511,12 +3522,18 @@ int freeMemoryIfNeeded(void) {
         mem_used -= aofRewriteBufferSize();
     }
 
+    // 检查是否依然没有足够的空间
+
     /* Check if we are still over the memory limit. */
     if (mem_used <= server.maxmemory) return C_OK;
+
+    // 好吧,计算我们需要释放多少空间
 
     /* Compute how much memory we need to free. */
     mem_tofree = mem_used - server.maxmemory;
     mem_freed = 0;
+
+    // 根据不同的键空间回收策略进行处理
 
     if (server.maxmemory_policy == MAXMEMORY_NO_EVICTION)
         goto cant_free; /* We need to free memory, but policy forbids. */

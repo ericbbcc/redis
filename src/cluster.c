@@ -5501,13 +5501,16 @@ void readwriteCommand(client *c) {
  * If the command fails NULL is returned, and the reason of the failure is
  * provided via 'error_code', which will be set to:
  *
+ * 如果请求包含多个keys,且这些keys不属于同一个hashslot
  * CLUSTER_REDIR_CROSS_SLOT if the request contains multiple keys that
  * don't belong to the same hash slot.
  *
+ * 如果请求包含的多个keys属于同一个slot,但是slot不稳定(处于migration状态或者importing状态,由于resharding产生的)
  * CLUSTER_REDIR_UNSTABLE if the request contains multiple keys
  * belonging to the same slot, but the slot is not stable (in migration or
  * importing state, likely because a resharding is in progress).
  *
+ * 如果请求的slot没有和任何一个node绑定,这种情况下,cluster的全局状态应该是down
  * CLUSTER_REDIR_DOWN_UNBOUND if the request addresses a slot which is
  * not bound to any node. In this case the cluster global state should be
  * already "down" but it is fragile to rely on the update of the global state,
@@ -5526,6 +5529,8 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
     /* Set error code optimistically for the base case. */
     if (error_code) *error_code = CLUSTER_REDIR_NONE;
 
+    // 如果命令是execCommand命令客户端又不是处于multi状态,则直接返回
+
     /* We handle all the cases as if they were EXEC commands, so we have
      * a common code path for everything */
     if (cmd->proc == execCommand) {
@@ -5534,6 +5539,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
         if (!(c->flags & CLIENT_MULTI)) return myself;
         ms = &c->mstate;
     } else {
+        // 如果客户端不是处于multi或者exec状态
         /* In order to have a single codepath create a fake Multi State
          * structure if the client is not in MULTI/EXEC state, this way
          * we have a single codepath below. */
@@ -5545,6 +5551,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
         mc.cmd = cmd;
     }
 
+    // 检查所有的keys同处于一个hash slot
     /* Check that all the keys are in the same hash slot, and obtain this
      * slot and the node associated. */
     for (i = 0; i < ms->count; i++) {
